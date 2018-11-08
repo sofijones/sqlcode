@@ -1,0 +1,179 @@
+--// comparison time period
+drop table #compPeriod
+select 201404 sta,
+	   201603 fin
+into #compPeriod
+ 
+--// submissions
+ 
+drop table #subs
+select trust, site, siteid, countryid,
+	   count(*)n,
+	   sum(accrval)accr,
+	   sum(died)died,
+	   count(*)-sum(died)surv,
+	   year(arvd)arvY,
+	   month(arvd)arvM,
+	   year(arvd)*100+month(arvd) arvID,
+	   case when month(arvd) < 4 then cast(right(year(arvd),2)-1 as nvarchar) + '/' + right(year(arvd),2)
+			else right(year(arvd),2) + '/' + cast(right(year(arvd),2)+1 as nvarchar) end arvftyear
+into #subs
+from pricache
+	join #compPeriod on year(arvd)*100+month(arvd) between sta and fin
+------------------------------
+-- hospital / region selection
+------------------------------
+--where networkid = 140
+where siteid = 8019
+--where site like '%chert%'
+group by trust, site, siteid, countryid,
+	   year(arvd),
+	   month(arvd),
+	   year(arvd)*100+month(arvd),
+	   case when month(arvd) < 4 then cast(right(year(arvd),2)-1 as nvarchar) + '/' + right(year(arvd),2)
+			else right(year(arvd),2) + '/' + cast(right(year(arvd),2)+1 as nvarchar) end
+ 
+-- fixing incorrectly displayed values
+update #subs
+	set arvftyear = case when left(arvftyear,1) not like '[01]' then '0'+arvftyear
+					  else arvftyear end
+ 
+update #subs
+	set arvftyear = case when len(arvftyear) = 4 then left(arvftyear,3)+'0'+right(arvftyear,1)
+					  else arvftyear end
+ 
+--// HES
+drop table #hes
+select site hsite, trust htrust, hyear, hmonth, HESdied, hes_low, hes_high, fedback,
+	   case when hmonth < 4 then cast(right(hyear,2)-1 as nvarchar) + '/' + right(hyear,2)
+			else right(hyear,2) + '/' + cast(right(hyear,2)+1 as nvarchar) end ftyear
+into #hes
+from hmonth
+ 
+--// adding hes figures for months in which we dont currently have HES data based on the last instance of that month in the hmonth table
+--// last instance of each month is pulled out by joining to the max(hstart) of each
+--// all month instances are pulled from the PRI cache, we only use those following the last instance in hmonth by joining using increStart > hstart
+ 
+insert into #hes
+select site, trust, year, month, hesdied, hes_low, hes_high, fedback,
+	   case when hmonth < 4 then cast(right(year,2)-1 as nvarchar) + '/' + right(year,2)
+			else right(year,2) + '/' + cast(right(year,2)+1 as nvarchar) end ftyear
+from (select *
+	  from hmonth
+		-- last instance of each month (in hes)
+		join (select site lastsite, hmonth lastmonth, max(hstart)laststart
+			  from hmonth
+			  group by site, hmonth)lastx on site = lastsite and hstart = laststart)hes
+		-- all month / year instances
+		join (select distinct year(arvd)year, month(arvd)month,
+				     (year(arvd)*10000)+(month(arvd)*100)+1 increStart -- month start
+			  from PRIcache)allmonths on month = hmonth and increStart > hstart
+ 
+ 
+-- fixing incorrectly displayed values
+update #hes
+	set ftyear = case when left(ftyear,1) not like '[01]' then '0'+ftyear
+					  else ftyear end
+ 
+update #hes
+	set ftyear = case when len(ftyear) = 4 then left(ftyear,3)+'0'+right(ftyear,1)
+					  else ftyear end
+ 
+--////////////////////////////////////////////////--
+--\\\\\\\\\\\\\\\\\\\\\OUTPUT\\\\\\\\\\\\\\\\\\\\\--
+--////////////////////////////////////////////////--
+ 
+-- comp by month
+select site, hyear, hmonth,
+	   sum(n)n,
+	   --sum(hes_low)hes_low,
+	   sum(hes_high)hes_high,
+	   case when fedback = 1 then case when sum(n)/sum(hes_low)*100 >= 100 then '100+' else cast(round(sum(n)/sum(hes_low)*100,1) as nvarchar) end
+			else
+		    case when sum(n)/sum(hes_high)*100 >= 100 then '100+'
+				 else cast(round(sum(n)/sum(hes_high)*100,1) as nvarchar) + ' - ' + case when sum(n)/sum(hes_low)*100 >= 100 then '100+' else cast(round(sum(n)/sum(hes_low)*100,1) as nvarchar) end end end comprange,
+	   round(sum(accr)/sum(n)*100,1) accr
+from #subs
+	join #hes on site = hsite and arvid = hyear*100+hmonth
+-- alternate version will show all months irrespective of data in them or not
+--from #hes
+--    join (select distinct site ste from #subs)sbs on hsite = ste
+--    join #compPeriod on hyear*100+hmonth between sta and fin
+--    left join #subs on site = hsite and arvid = hyear*100+hmonth
+group by site, hyear, hmonth, fedback
+order by 1,2,3
+ 
+-- by year
+select site, siteid, arvy, n,
+          hes_low, hes_high,
+          case when countryid = 5 then cast(round(n/hes_high*100,1) as nvarchar)
+                     else case when fedback >= 0.5 then case when n/hes_low*100 >= 100 then '100+' else cast(round(n/hes_low*100,1) as nvarchar) end
+                                    else case when n/hes_high*100 >= 100 then '100+'
+                                                       else cast(round(n/hes_high*100,1) as nvarchar) + ' - ' + case when n/hes_low*100 >= 100 then '100+' else cast(round(n/hes_low*100,1) as nvarchar) end end end end comprange,
+          round(accr,1)accr
+from (select trust, site, siteid, arvy,
+                   n,hes_low,hes_high,
+                   n/hes_low*100 lcomp,
+                   n/hes_high*100 hcomp,
+                     accr,
+                     fedback,
+                     countryid
+         from (select trust, site, siteid, arvy, sum(n)n, sum(accr)/sum(n)*100 accr, countryid
+                  from #subs
+                  group by trust, site, siteid, arvy, countryid)subs
+              join (select htrust, hsite, hyear, sum(hes_low)hes_low, sum(hes_high)hes_high, avg(fedback)fedback
+                       from #hes
+                       group by htrust, hsite, hyear)hes on site = hsite and arvy = hyear)x
+ 
+-- by FT year
+select site, siteid, arvftyear, n,
+	   --hlow, hhigh,
+	   case when fedback >= 0.5 then case when lcomp >= 100 then '100+' else cast(round(lcomp,1) as nvarchar) end
+			else case when hcomp >= 100 then '100+'
+					  else cast(round(hcomp,1) as nvarchar) + ' - ' + case when lcomp >= 100 then '100+' else cast(round(lcomp,1) as nvarchar) end end end comprange,
+	   round(accr,1)accr
+	   --// DS ratio stuff
+	   --,
+	   --scomp,dcomp,
+	   --scomp/dcomp ratio
+from (select trust, site, siteid, arvftyear,
+		     n,hlow,hhigh,
+		     n/hlow*100 lcomp,
+		     n/hhigh*100 hcomp,
+			 accr,
+			 died/hesdied*100 dcomp,
+			 surv/hessurv*100 scomp,
+			 fedback
+	  from (select trust, site, siteid, arvftyear, sum(n)n, sum(accr)/sum(n)*100 accr, sum(died)died, sum(surv)surv
+		    from #subs
+		    group by trust, site, siteid, arvftyear)subs
+		join (select htrust, hsite, ftyear, sum(hes_low)hlow, sum(hes_high)hhigh, avg(fedback)fedback, sum(hesdied)hesdied, sum(hes_high)-sum(hesdied)hessurv
+			  from #hes
+			  group by htrust, hsite, ftyear)hes on site = hsite and arvftyear = ftyear)x
+order by 1
+ 
+-- by full time period
+select trust, site,
+	   n,
+	   case when countryid = 5 then cast(round(n/hes_high*100,1) as nvarchar)
+			else case when fedback >= 0.5 then case when n/hes_low*100 >= 100 then '100+' else cast(round(n/hes_low*100,1) as nvarchar) end
+					  else case when n/hes_high*100 >= 100 then '100+'
+								else cast(round(n/hes_high*100,1) as nvarchar) + ' - ' + case when n/hes_low*100 >= 100 then '100+' else cast(round(n/hes_low*100,1) as nvarchar) end end end end comprange,
+	   round(accr,1)accr
+	   -- DS ratio stuff
+	   ,
+	   died/hesdied*100 dcomp,
+	   surv/hessurv*100 scomp,
+	   (died/hesdied)/(surv/hessurv) dsRatio
+from (select trust, site, countryid,
+			 sum(n)n,
+			 sum(died)died,
+			 sum(surv)surv,
+			 sum(accr)/sum(n)*100 accr
+	  from #subs
+	  group by trust, site, countryid)subs
+		join (select htrust, hsite, sum(hes_low)hes_low, sum(hes_high)hes_high, avg(fedback)fedback, sum(hesdied)hesdied, sum(hes_high)-sum(hesdied)hessurv
+			  from #hes
+				join #compPeriod on hyear*100+hmonth between sta and fin
+
+  group by htrust, hsite)hes on site = hsite
