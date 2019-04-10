@@ -1,0 +1,139 @@
+
+DROP TABLE PBI_Limb
+SELECT
+  site,
+  submissionid,
+  BOASTIncidentDateTime,
+  age,
+  sex,
+  mech,
+  CASE
+    WHEN opnID IS NOT NULL THEN 'Open'
+    ELSE 'Closed'
+  END CloseOpen,
+  transfertype,
+  CAST(NULL AS float) timetoop,
+  ttct,
+  CAST(NULL AS nvarchar) surggrd,
+  0 hadop,
+  CASE
+    WHEN ttct IS NOT NULL THEN 1
+    ELSE 0
+  END hadCT 
+INTO PBI_Limb
+FROM PRIcache
+JOIN (	SELECT DISTINCT
+		  submissionid LimbID
+		FROM SubmissionCodingView
+		WHERE LEFT(aiscode, 1) IN (7, 8)) lmb
+		  ON submissionid = LimbID
+
+LEFT JOIN (	SELECT DISTINCT
+			  submissionid opnID
+			FROM SubmissionCodingView
+			WHERE aiscode LIKE '[78]%'
+			AND description LIKE '%open%'
+			AND severity = 3) opn
+			  ON submissionid = opnID
+
+WHERE siteid IN (8103, 8003, 8111, 8100, 8810, 8530)
+AND arvd BETWEEN '20160101' AND '20181231'
+
+----------------------------------
+DROP TABLE #op
+SELECT
+  submissionid opid,
+  dt,
+  ISNULL(surg, 99) grd,
+  ROW_NUMBER() OVER (PARTITION BY submissionid ORDER BY ISNULL(dt, '31 December 2050')) rank INTO #op
+FROM submissionsectionextview
+JOIN (	SELECT DISTINCT
+		  submissionid suid
+		FROM PBI_Limb) ds
+		  ON submissionid = suid
+LEFT JOIN (	SELECT
+			  s1.submissionsectionid dtid,
+			  CAST(s1.answertext + ' ' + LEFT(s2.answertext, 2) + ':' + RIGHT(s2.answertext, 2) AS datetime) dt
+			FROM submissionsectionanswer s1
+			JOIN submissionsectionanswer s2
+			  ON s1.submissionsectionid = s2.submissionsectionid
+			WHERE s1.questionid = 'inter_date'
+			AND s1.answertext LIKE '[1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890]'
+			AND s2.questionid = 'inter_time'
+			AND s2.answertext LIKE '[012][0123456789][0123456][0123456789]') x
+			  ON submissionsectionid = dtid
+LEFT JOIN (SELECT
+			  submissionsectionid surgID,
+			  MIN(CASE
+				WHEN networkid = 141 THEN CASE
+					WHEN AnswerText = 1 THEN 1
+					WHEN AnswerText = 19 THEN 2
+					WHEN AnswerText IN (14, 15, 57, 58, 59, 13, 62, 44, 18) THEN 3
+					WHEN AnswerText IN (60) THEN 4
+					WHEN AnswerText IN (61, 56) THEN 5
+					WHEN AnswerText IN (55) THEN 6
+					WHEN AnswerText IN (49, 16, 64) THEN 7
+					ELSE 99
+				  END
+				ELSE CASE
+					WHEN AnswerText = 1 THEN 1
+					WHEN AnswerText = 19 THEN 2
+					WHEN AnswerText IN (13, 14, 15, 18, 57, 58, 59) THEN 3
+					WHEN AnswerText IN (44, 60, 62) THEN 4
+					WHEN AnswerText IN (56, 61) THEN 5
+					WHEN AnswerText IN (16, 55, 64) THEN 6
+					WHEN AnswerText = 49 THEN 7
+					ELSE 99
+				  END
+			  END) surg
+			FROM SubmissionSectionView
+			JOIN (	SELECT
+					  submissionid suid,
+					  networkid
+					FROM PRIcache) pri
+			  ON submissionid = suid
+			WHERE QuestionID IN ('INTER_PROC_SURG_GRD', 'INTER_PROC_SURG_GRD2', 'INTER_PROC_SURG_GRD3', 'inter_super_grd')
+			GROUP BY submissionsectionid) surg
+  ON surgID = submissionsectionid
+WHERE questionid = 'inter_proc_proc'
+-- specified ops list
+AND answertext IN (	SELECT
+					  lookupname
+					FROM lookup
+					WHERE lookupgroup LIKE '%limb%')
+
+
+----------------------------------
+UPDATE PBI_Limb
+SET hadop = 1
+FROM PBI_Limb
+JOIN #op
+  ON submissionid = opid
+
+UPDATE PBI_Limb
+SET timetoop = CAST(DATEDIFF(mi, BOASTIncidentDateTime, CASE
+  WHEN dt < BOASTIncidentDateTime THEN NULL
+  ELSE dt
+END) AS float)
+FROM PBI_Limb
+JOIN #op
+  ON submissionid = opid
+WHERE dt IS NOT NULL
+AND rank = 1
+
+
+UPDATE PBI_Limb
+SET surggrd =
+             CASE
+               WHEN grd = 1 THEN 'Consultant'
+               WHEN grd = 2 THEN 'Associate Specialist'
+               WHEN grd = 3 THEN 'ST3+'
+               WHEN grd = 4 THEN 'ST N/K'
+               WHEN grd = 5 THEN 'FY / ST 1-2'
+               WHEN grd = 6 THEN 'Other'
+               WHEN grd IN (7, 99) THEN 'Not Recorded'
+             END
+FROM PBI_Limb
+JOIN #op
+  ON submissionid = opid
+WHERE rank = 1
