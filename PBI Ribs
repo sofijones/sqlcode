@@ -1,0 +1,107 @@
+
+DROP TABLE PBI_Rib
+SELECT
+  submissionid,
+  RibType,
+  Analgesia,
+  RibCTdt,
+  DATEDIFF(mi, arvdt, ribctdt) ttribct,
+  CASE
+    WHEN FixID IS NOT NULL THEN 1
+    ELSE 0
+  END Fixation,
+  Fixdt 
+INTO PBI_Rib
+
+FROM PRIcache
+JOIN -- rib fractures
+(	SELECT DISTINCT
+	  submissionid RibID
+	FROM submissioncodingview
+	WHERE aiscode IN (450201, 450202, 450203, 450204, 450205, 450209, 450210, 450211, 450212, 450213, 450214)) rib
+	  ON submissionid = RibID
+
+
+LEFT JOIN -- rib type
+(	SELECT DISTINCT
+	  submissionid RibTypID,
+	  MAX(CASE
+		WHEN aiscode IN (450201, 450202) THEN 1
+		WHEN aiscode = 450205 AND
+		  supplementarycode IN (57, 58, 59, 60, 61) THEN 1
+		WHEN aiscode IN (450203, 450204) THEN 2
+		WHEN aiscode = 450205 AND
+		  supplementarycode IN (63, 64, 65, 66, 67, 68, 69, 70, 71, 73, 74, 75, 76, 77, 78, 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91) THEN 2
+		WHEN aiscode IN (450209, 450211, 450212, 450213, 450214) THEN 3
+	  END) RibType
+	FROM submissioncodingview
+	WHERE description LIKE '%rib%'
+	GROUP BY submissionid) typ
+	  ON submissionid = RibTypID
+
+LEFT JOIN -- Analgesia
+(	SELECT DISTINCT
+	  submissionid AnGesID,
+	  description Analgesia
+	FROM submissionsectionview
+	JOIN lookup
+	  ON answertext = lookupname
+	  AND lookuptypeid = 'AnalgesiaName'
+	WHERE questionid = 'INTER_ANAL_ANALG') anges
+	  ON submissionid = AnGesID
+
+LEFT JOIN -- ct
+(	SELECT
+	  submissionid CTID,
+	  MIN(ctdt) RibCTdt
+	FROM SubmissionSectionExtView
+
+	LEFT JOIN -- date/time
+	(SELECT
+	  submissionsectionid dtid,
+	  CAST(answertext AS datetime) + ' ' + CAST(LEFT(t, 2) + ':' + RIGHT(t, 2) AS datetime) ctdt
+	FROM submissionsectionview
+	LEFT JOIN (SELECT
+	  submissionsectionid TimeID,
+	  AnswerText t
+	FROM submissionsectionview
+	WHERE questionid = 'assess_time'
+	AND answertext LIKE '[012][0123456789][012345][0123456789]') tme
+	  ON submissionsectionid = TimeID
+	WHERE questionid = 'assess_date'
+	AND answertext LIKE '[12][0-9][0-9][0-9][01][0-9][0-3][0-9]') dt
+	  ON SubmissionSectionID = dtid
+
+	WHERE questionid IN ('ASSESS_CTS_BODYAREA', 'ASSESS_CTC_BODYAREA')
+	AND answertext IN (2, 99)
+	GROUP BY submissionid) ct
+	  ON submissionid = CTID
+
+LEFT JOIN -- fixation
+(SELECT
+  submissionid FixID,
+  MIN(opdt) Fixdt
+FROM submissionsectionview
+LEFT JOIN -- date/time
+(SELECT
+  submissionsectionid dtid,
+  CAST(answertext AS datetime) + ' ' + CAST(LEFT(t, 2) + ':' + RIGHT(t, 2) AS datetime) opdt
+FROM submissionsectionview
+LEFT JOIN (SELECT
+  submissionsectionid TimeID,
+  answertext t
+FROM submissionsectionview
+WHERE questionid = 'inter_time'
+AND answertext LIKE '[012][0123456789][012345][0123456789]') tme
+  ON submissionsectionid = TimeID
+WHERE questionid = 'inter_date'
+AND answertext LIKE '[12][0-9][0-9][0-9][01][0-9][0-3][0-9]') dt
+  ON submissionsectionid = dtid
+
+WHERE questionid = 'INTER_PROC_PROC'
+AND answertext = 455
+GROUP BY submissionid) fix
+  ON submissionid = FixID
+
+WHERE siteid IN (8103, 8003, 8111, 8100, 8810, 8530)
+AND arvd BETWEEN '20160101' AND '20181231'
