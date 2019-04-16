@@ -1,0 +1,29 @@
+DROP TABLE PBI_OP
+SELECT
+  site,
+  siteid,
+  submissionid,
+  age,
+  mech,
+  arvdt,
+  disdest,
+  IncLocation,
+  msen,
+  charl INTO PBI_OP
+FROM PRIcache
+
+LEFT JOIN -- incident location
+(SELECT
+  submissionid LocID,
+  description IncLocation
+FROM submissionsectionview
+JOIN lookup
+  ON answertext = lookupname
+  AND lookuptypeid = 'IncidentLocation'
+WHERE questionid = 'INCIDENT_LOC_TYPE') loc
+  ON submissionid = LocID
+
+
+WHERE siteid IN (8103, 8003, 8111, 8100, 8810, 8530)
+AND arvd BETWEEN '20160101' AND '20181231'
+AND age > 60
