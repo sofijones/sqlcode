@@ -1,0 +1,117 @@
+
+DROP TABLE #select
+SELECT
+  * INTO #select
+FROM PRIcache
+WHERE siteid IN (8103, 8003, 8111, 8100, 8810, 8530)
+AND arvd BETWEEN '20160101' AND '20181231'
+AND head > 0
+
+
+
+-- time to CT
+DROP TABLE #ct
+SELECT
+  submissionid ctid,
+  MIN(dt) ctdt INTO #ct
+FROM submissionsectionextview ssev
+LEFT JOIN (SELECT
+  s1.submissionsectionid,
+  CAST(s1.answertext + ' ' + LEFT(s2.answertext, 2) + ':' + RIGHT(s2.answertext, 2) AS datetime) dt
+FROM submissionsectionanswer s1
+JOIN submissionsectionanswer s2
+  ON s1.submissionsectionid = s2.submissionsectionid
+WHERE s1.questionid = 'assess_date'
+AND s1.answertext LIKE '[1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890]'
+AND s2.questionid = 'assess_time'
+AND s2.answertext LIKE '[012][0123456789][0123456][0123456789]') x
+  ON ssev.submissionsectionid = x.SubmissionSectionID
+WHERE submissionid IN (SELECT
+  submissionid
+FROM #select)
+AND questionid LIKE 'assess_cts_bodyarea'
+AND answertext IN ('1', '99')
+GROUP BY submissionid
+
+-- time to cranio
+DROP TABLE #cran
+SELECT
+  submissionid cranid,
+  MIN(dt) crandt INTO #cran
+FROM submissionsectionextview ssev
+LEFT JOIN (SELECT
+  s1.submissionsectionid,
+  CAST(s1.answertext + ' ' + LEFT(s2.answertext, 2) + ':' + RIGHT(s2.answertext, 2) AS datetime) dt
+FROM submissionsectionanswer s1
+JOIN submissionsectionanswer s2
+  ON s1.submissionsectionid = s2.submissionsectionid
+WHERE s1.questionid = 'inter_date'
+AND s1.answertext LIKE '[1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890]'
+AND s2.questionid = 'inter_time'
+AND s2.answertext LIKE '[012][0123456789][0123456][0123456789]') x
+  ON ssev.submissionsectionid = x.SubmissionSectionID
+WHERE submissionid IN (SELECT
+  submissionid
+FROM #select)
+AND QuestionID = 'inter_proc_proc'
+AND AnswerText IN (141, 147, 148, 149, 143)
+GROUP BY submissionid
+
+-- time to ICP
+DROP TABLE #icp
+SELECT
+  submissionid icpid,
+  MIN(dt) icpdt INTO #icp
+FROM submissionsectionextview ssev
+LEFT JOIN (SELECT
+  s1.submissionsectionid,
+  CAST(s1.answertext + ' ' + LEFT(s2.answertext, 2) + ':' + RIGHT(s2.answertext, 2) AS datetime) dt
+FROM submissionsectionanswer s1
+JOIN submissionsectionanswer s2
+  ON s1.submissionsectionid = s2.submissionsectionid
+WHERE s1.questionid = 'inter_date'
+AND s1.answertext LIKE '[1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890][1234567890]'
+AND s2.questionid = 'inter_time'
+AND s2.answertext LIKE '[012][0123456789][0123456][0123456789]') x
+  ON ssev.submissionsectionid = x.SubmissionSectionID
+WHERE submissionid IN (SELECT
+  submissionid
+FROM #select)
+AND QuestionID = 'inter_proc_proc'
+AND AnswerText = 139
+GROUP BY submissionid
+
+
+DROP TABLE PBI_Head
+SELECT
+  site,
+  siteid,
+  submissionid,
+  age,
+  sex,
+  mech,
+  transfertype,
+  ttype,
+  gcs,
+  CASE
+    WHEN cranid IS NOT NULL THEN 1
+    ELSE 0
+  END Crani,
+  CASE
+    WHEN ctid IS NOT NULL THEN 1
+    ELSE 0
+  END HeadCT,
+  CASE
+    WHEN icpid IS NOT NULL THEN 1
+    ELSE 0
+  END ICP,
+  crandt,
+  ctdt,
+  icpdt INTO PBI_Head
+FROM #select
+LEFT JOIN #cran
+  ON submissionid = cranid
+LEFT JOIN #ct
+  ON submissionid = ctid
+LEFT JOIN #icp
+  ON submissionid = icpid
