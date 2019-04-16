@@ -1,0 +1,31 @@
+DROP TABLE #select
+SELECT
+  * INTO #select
+FROM PRIcache
+WHERE siteid IN (8103, 8003, 8111, 8100, 8810, 8530)
+AND arvd BETWEEN '20160101' AND '20181231'
+AND age < 16
+
+DROP TABLE PBI_Paed
+SELECT
+  site,
+  siteid,
+  submissionid,
+  age,
+  sex,
+  iss,
+  issband,
+  ttype,
+  transfertype,
+  CASE
+    WHEN intent = 3 THEN 'NAI'
+    ELSE mech
+  END PaedMech,
+  arvmode,
+  arvdt,
+  msen,
+  CASE
+    WHEN DATEDIFF(mi, arvdt, msendt + msentm) < 5 THEN msen
+    ELSE NULL
+  END MSen5 INTO PBI_Paed
+FROM #select
