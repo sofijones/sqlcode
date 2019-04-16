@@ -82,36 +82,17 @@ AND AnswerText = 139
 GROUP BY submissionid
 
 
-DROP TABLE PBI_Head
-SELECT
-  site,
-  siteid,
-  submissionid,
-  age,
-  sex,
-  mech,
-  transfertype,
-  ttype,
-  gcs,
-  CASE
-    WHEN cranid IS NOT NULL THEN 1
-    ELSE 0
-  END Crani,
-  CASE
-    WHEN ctid IS NOT NULL THEN 1
-    ELSE 0
-  END HeadCT,
-  CASE
-    WHEN icpid IS NOT NULL THEN 1
-    ELSE 0
-  END ICP,
-  crandt,
-  ctdt,
-  icpdt INTO PBI_Head
-FROM #select
-LEFT JOIN #cran
-  ON submissionid = cranid
-LEFT JOIN #ct
-  ON submissionid = ctid
-LEFT JOIN #icp
-  ON submissionid = icpid
+drop table PBI_Head
+select site, siteid, submissionid, age, sex, mech, transfertype, ttype, gcs, 
+	case	when cranid is not null then 1 else 0 end Crani,
+	datediff(mi,arvdt,crandt) timetocran,
+	case	when ctid is not null then 1 else 0 end HeadCT,
+	datediff(mi,arvdt,ctdt) timetoHeadCT,
+	case	when icpid is not null then 1 else 0 end ICP,
+	datediff(mi,arvdt,icpdt) timetoICP,
+	crandt, ctdt, icpdt
+into PBI_Head
+from #select
+left join #cran on submissionid = cranid
+left join #ct on submissionid = ctid
+left join #icp on submissionid = icpid
